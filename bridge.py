@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from adapters import angel, dhan, shoonya, fyers, upstox, zerodha
 from adapters.base import SYMBOL_IDS
+import upstox_chain
 import os
 
 log = logging.getLogger("broker-bridge")
@@ -85,3 +86,31 @@ def ltp():
     return {"as_of": datetime.now(IST).isoformat(), "market_open": open_now,
             "broker": state["broker"], "stale": not open_now,
             "data": {k: dict(v) for k, v in latest.items()}}
+
+
+@app.get("/optionchain/expiries")
+def option_expiries(underlying: str = "NIFTY"):
+    underlying = underlying.strip().upper()
+    if underlying not in upstox_chain.UNDERLYINGS:
+        return {"error": f"unknown underlying {underlying!r} — use NIFTY, BANKNIFTY or SENSEX"}
+    try:
+        return {"underlying": underlying, "expiries": upstox_chain.expiries(underlying)}
+    except upstox_chain.UpstoxAuthError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        log.warning("/optionchain/expiries failed: %s", str(e)[:200])
+        return {"error": "upstox call failed — check bridge logs"}
+
+
+@app.get("/optionchain")
+def option_chain(underlying: str = "NIFTY", expiry: str = "current_week"):
+    underlying = underlying.strip().upper()
+    if underlying not in upstox_chain.UNDERLYINGS:
+        return {"error": f"unknown underlying {underlying!r} — use NIFTY, BANKNIFTY or SENSEX"}
+    try:
+        return upstox_chain.chain(underlying, expiry.strip() or "current_week")
+    except upstox_chain.UpstoxAuthError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        log.warning("/optionchain failed: %s", str(e)[:200])
+        return {"error": "upstox call failed — check bridge logs"}
