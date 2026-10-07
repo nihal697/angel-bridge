@@ -1,41 +1,49 @@
-# angel-bridge
+# broker-bridge (repo: angel-bridge)
 
-Personal Angel One SmartAPI bridge: live **Nifty 50 / Nifty Bank / Sensex** LTP
-over plain HTTP, for personal paper trading. No orders, no redistribution.
+Personal multi-broker bridge: live **Nifty 50 / Nifty Bank / Sensex** LTP over
+plain HTTP, for personal paper trading. No orders, no redistribution.
 
 - `GET /ltp` → latest ticks (`stale:true` outside 09:15–15:30 IST)
-- `GET /health` → socket state, last login, last tick
+- `GET /health` → broker, socket state, last tick
 
-## 1. Angel side (5 min, free for Angel One clients)
+Pick the broker with the `BROKER` env var. The `/ltp` shape is identical for
+every broker, so the phone app never changes when you switch.
 
-1. Log in at [smartapi.angelone.in](https://smartapi.angelone.in) → **My APIs / Create App** → copy the **API key**.
-2. On the same portal, find the **TOTP secret / QR value** for your app and save the text secret (this is what lets code log in without your phone).
-3. You need: API key, client code, PIN/password, TOTP secret.
+## Broker matrix (honest status)
 
-## 2. Deploy on Render (free)
+| BROKER | Auth | Refresh | Cost | Status |
+|---|---|---|---|---|
+| `angel` | API key + PIN + TOTP, auto re-login | automatic | free (clients) | ✅ proven against the live API |
+| `dhan` | static API token, never expires | never | free (clients) | built from v2 docs + live instrument master |
+| `shoonya` | UID + password + PAN/DOB + vendor code, auto re-login | automatic | free (clients) | built from the lib source itself |
+| `fyers` | browser-issued token, ~daily | manual, in FYERS portal | free (clients) | built from official samples |
+| `upstox` | OAuth token, ~daily | manual, in developer portal | free (clients) | built from v2 docs |
+| `zerodha` | API key + daily token | manual, daily | **~Rs 2,000/mo** | built from live instrument dump |
 
-1. Push this repo (or fork it), then **New → Web Service → this repo** on Render
-   (or use `render.yaml` — Blueprint).
-2. Add 4 environment variables (never commit these):
-   `ANGEL_API_KEY`, `ANGEL_CLIENT_CODE`, `ANGEL_PASSWORD`, `ANGEL_TOTP_SECRET`.
-3. Deploy. Open `https://<your-app>.onrender.com/health` — `connected:true`
-   during market hours means live ticks are flowing.
+Only `angel` has done a live login test from here. The rest are
+docs-verified and import-tested — each needs one live run with your keys
+before you trust it (the logs say plainly what's wrong if not).
 
-Notes:
+Index references used (all read from live masters/dumps, not memory):
+Angel NSE 99926000/99926009, BSE 99919000 · Dhan IDX_I 13/25/51 ·
+Shoonya NSE 26000/26009, BSE 1 · FYERS NSE:NIFTY50-INDEX, NSE:NIFTYBANK-INDEX,
+BSE:SENSEX-INDEX · Upstox NSE_INDEX|Nifty 50, NSE_INDEX|Nifty Bank,
+BSE_INDEX|SENSEX · Kite NSE 256265/260105, BSE 265.
 
-- Angel sessions expire ~daily; the bridge re-logs-in and reconnects on its own.
-- Render free sleeps after ~15 min idle — first load of the day is slow, then
-  polling keeps it warm. A free UptimeRobot ping every 14 min on weekdays
-  fixes even that.
+## Deploy on Render (free)
+
+New → Blueprint → this repo (or Web Service with the commands in
+`render.yaml`). Set `BROKER` plus only that broker's env vars (see
+`render.yaml` for names). Deploy, then open `/health`.
+
+- Render free sleeps after ~15 min idle — a free UptimeRobot ping every
+  14 min on weekdays keeps it warm.
 - Personal use only: exchange rules forbid republishing broker data feeds.
 
-## 3. Use it
+## Use it
 
 ```bash
 curl https://<your-app>.onrender.com/ltp
-# {"market_open": true, "stale": false,
+# {"market_open": true, "stale": false, "broker": "dhan",
 #  "data": {"NIFTY": {"price": 26178.4, "ts": "..."}, ...}}
 ```
-
-Next step (not done here): point the DailyTrade fork at this endpoint as an
-"Angel live" source next to Yahoo.

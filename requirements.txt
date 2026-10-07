@@ -1,6 +1,10 @@
 fastapi==0.115.*
 uvicorn[standard]==0.34.*
+requests==2.31.*
+# per-broker clients (only the selected BROKER's is imported at runtime)
 smartapi-python==1.4.*
 pyotp==2.9.*
 logzero==1.7.*
-websocket-client==1.8.*
+websocket-client==1.6.*
+fyers-apiv3==3.1.*
+kiteconnect==5.*

@@ -7,6 +7,9 @@ services:
     startCommand: uvicorn bridge:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
+      - key: BROKER
+        value: angel
+      # Angel One (auto re-login; proven live)
       - key: ANGEL_API_KEY
         sync: false
       - key: ANGEL_CLIENT_CODE
@@ -14,4 +17,33 @@ services:
       - key: ANGEL_PASSWORD
         sync: false
       - key: ANGEL_TOTP_SECRET
+        sync: false
+      # DhanHQ (static token, never expires)
+      - key: DHAN_ACCESS_TOKEN
+        sync: false
+      - key: DHAN_CLIENT_ID
+        sync: false
+      # Shoonya/Finvasia (auto re-login; password plain here, hashed in code)
+      - key: SHOONYA_UID
+        sync: false
+      - key: SHOONYA_PASSWORD
+        sync: false
+      - key: SHOONYA_FACTOR2
+        sync: false
+      - key: SHOONYA_VENDOR_CODE
+        sync: false
+      - key: SHOONYA_API_SECRET
+        sync: false
+      # FYERS (token is daily — refresh in FYERS portal, update + redeploy)
+      - key: FYERS_APP_ID
+        sync: false
+      - key: FYERS_ACCESS_TOKEN
+        sync: false
+      # Upstox v2 (token is daily — refresh in developer portal)
+      - key: UPSTOX_ACCESS_TOKEN
+        sync: false
+      # Zerodha Kite (paid API ~Rs 2,000/mo + daily token)
+      - key: ZERODHA_API_KEY
+        sync: false
+      - key: ZERODHA_ACCESS_TOKEN
         sync: false
