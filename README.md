@@ -5,6 +5,10 @@ plain HTTP, for personal paper trading. No orders, no redistribution.
 
 - `GET /ltp` → latest ticks (`stale:true` outside 09:15–15:30 IST)
 - `GET /health` → broker, socket state, last tick
+- `GET /optionchain?underlying=NIFTY&expiry=current_week` → strikes with CE/PE
+  LTP, Greeks, OI + lot sizes (Upstox token required; pre-built, needs one
+  live test with a real token before the app UI is built on it)
+- `GET /optionchain/expiries?underlying=NIFTY` → available expiries
 
 Pick the broker with the `BROKER` env var. The `/ltp` shape is identical for
 every broker, so the phone app never changes when you switch.
