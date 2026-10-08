@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from adapters import angel, dhan, shoonya, fyers, upstox, zerodha
 from adapters.base import SYMBOL_IDS
+import history
 import optionchain
 import upstox_chain
 import os
@@ -134,9 +135,34 @@ def health():
             "error": state["error"]}
 
 
+@app.get("/history")
+def history_candles(exchange: str = "NFO", token: str = "",
+                    interval: str = "ONE_MINUTE", frm: str = "", to: str = ""):
+    """Angel historical candles, incl. NFO/BFO option contracts.
+    Dates: 'YYYY-MM-DD HH:MM'. Only works when BROKER=angel for now."""
+    if os.environ.get("BROKER", "angel").strip().lower() != "angel":
+        return {"error": "history currently needs BROKER=angel"}
+    try:
+        rows = history.candles(
+            {"ANGEL_API_KEY": os.environ["ANGEL_API_KEY"],
+             "ANGEL_CLIENT_CODE": os.environ["ANGEL_CLIENT_CODE"],
+             "ANGEL_PASSWORD": os.environ["ANGEL_PASSWORD"],
+             "ANGEL_TOTP_SECRET": os.environ["ANGEL_TOTP_SECRET"]},
+            exchange.strip().upper(), token.strip(), interval.strip().upper(),
+            frm.strip(), to.strip())
+        return {"exchange": exchange.strip().upper(), "token": token.strip(),
+                "interval": interval.strip().upper(), "candles": rows}
+    except KeyError as e:
+        return {"error": f"angel credentials not configured on bridge (missing {e})"}
+    except (ValueError, RuntimeError) as e:
+        return {"error": str(e)[:200]}
+    except Exception as e:
+        log.warning("/history failed: %s", str(e)[:200])
+        return {"error": "history call failed — check bridge logs"}
+
+
 @app.get("/ltp")
-def ltp():
-    open_now = market_is_open()
+def ltp():    open_now = market_is_open()
     return {"as_of": datetime.now(IST).isoformat(), "market_open": open_now,
             "broker": state["broker"], "stale": not open_now,
             "data": {k: dict(v) for k, v in latest.items()}}
