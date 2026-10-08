@@ -9,7 +9,8 @@ plain HTTP, for personal paper trading. No orders, no redistribution.
   LTP, Greeks, OI + lot sizes (Upstox token required; pre-built, needs one
   live test with a real token before the app UI is built on it)
 - `GET /optionchain/expiries?underlying=NIFTY` → available expiries
-
+- `GET /history?exchange=NFO&token=44572&interval=ONE_MINUTE&frm=YYYY-MM-DD+HH:MM&to=...`
+  → Angel historical candles, incl. option contracts (Yahoo has none for NSE F&O)
 Pick the broker with the `BROKER` env var. The `/ltp` shape is identical for
 every broker, so the phone app never changes when you switch.
 
