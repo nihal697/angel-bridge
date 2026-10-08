@@ -80,6 +80,7 @@ def _chain_bootstrap():
     except Exception as e:
         log.warning("master download failed at startup (retrying in loop): %s", str(e)[:150])
     threading.Thread(target=optionchain.refresh_loop, daemon=True).start()
+    threading.Thread(target=_oi_loop, daemon=True).start()
     while True:
         try:
             if os.environ.get("BROKER", "angel").strip().lower() == "angel" and optionchain.master_rows:
@@ -87,6 +88,35 @@ def _chain_bootstrap():
         except Exception as e:
             log.warning("option resubscribe failed: %s", str(e)[:150])
         _t.sleep(600)
+
+
+
+def _oi_loop():
+    """OI snapshot every 60s over the subscribed option tokens (Angel only)."""
+    import time as _t
+    import oi_fetcher
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            if os.environ.get("BROKER", "angel").strip().lower() == "angel":
+                subs = angel.current_option_tokens()
+                mapping = {}
+                if 2 in subs:
+                    mapping["NFO"] = subs[2]
+                if 4 in subs:
+                    mapping["BFO"] = subs[4]
+                if mapping:
+                    env = {k: os.environ[k] for k in
+                           ("ANGEL_API_KEY", "ANGEL_CLIENT_CODE", "ANGEL_PASSWORD", "ANGEL_TOTP_SECRET")
+                           if k in os.environ}
+                    if len(env) == 4:
+                        ts = datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                        for (exch, tok), v in oi_fetcher.fetch_oi(env, mapping).items():
+                            if v.get("oi") is not None:
+                                optionchain.record_oi(tok, v["oi"], ts)
+        except Exception as e:
+            log.warning("OI poll failed: %s", str(e)[:150])
+        _t.sleep(60)
 
 
 def _refresh_option_subs():
@@ -164,7 +194,8 @@ def history_candles(exchange: str = "NFO", token: str = "",
 
 
 @app.get("/ltp")
-def ltp():    open_now = market_is_open()
+def ltp():
+    open_now = market_is_open()
     return {"as_of": datetime.now(IST).isoformat(), "market_open": open_now,
             "broker": state["broker"], "stale": not open_now,
             "data": {k: dict(v) for k, v in latest.items()}}

@@ -66,6 +66,11 @@ def set_option_tokens(mapping):
             log.warning("[angel] live option resubscribe failed (picked up on reconnect): %s", str(e)[:150])
 
 
+def current_option_tokens():
+    """Currently subscribed option tokens, for the OI poller."""
+    return {et: list(toks) for et, toks in _option_tokens.items() if toks}
+
+
 def run_forever(on_tick):
     global _live_sws
     api_key, client_code = env("ANGEL_API_KEY"), env("ANGEL_CLIENT_CODE")

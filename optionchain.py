@@ -30,6 +30,7 @@ UNDERLYINGS = {
 master_rows = []          # filtered OPTIDX rows
 master_ts = None          # when the master was loaded
 opt_ticks = {}            # token -> {"price": float, "ts": str}
+opt_oi = {}               # token -> {"oi": int|None, "ts": str}
 _opt_lock = threading.Lock()
 
 
@@ -104,25 +105,44 @@ def record_tick(token, price, ts):
     with _opt_lock:
         opt_ticks[str(token)] = {"price": price, "ts": ts}
 
+
+def record_oi(token, oi, ts):
+    with _opt_lock:
+        opt_oi[str(token)] = {"oi": oi, "ts": ts}
+
 def chain(uid, expiry=None, spot=None):
-    """Merge master structure with live ticks. No tick yet -> ltp null."""
+    """Merge master structure with live ticks + OI; analytics over OI window."""
+    from analytics import put_call_ratio, max_pain, atm_iv
     expiry = expiry or nearest_expiry(uid)
     if not expiry:
         return {"underlying": uid, "expiry": None, "spot": spot, "strikes": []}
     rows, lot, newest = [], None, None
+    oi_seen = False
     for strike in sorted(chain_rows(uid, expiry)):
         legs = chain_rows(uid, expiry)[strike]
         item = {"strike": strike}
         for side in ("CE", "PE"):
             leg = legs.get(side, {})
             tick = opt_ticks.get(str(leg.get("token", ""))) if leg else None
+            oir = opt_oi.get(str(leg.get("token", ""))) if leg else None
             if leg and lot is None:
                 lot = leg.get("lotsize", 1)
             cell = {"token": leg.get("token"), "ltp": tick["price"] if tick else None,
-                    "ts": tick.get("ts") if tick else None, "lot_size": leg.get("lotsize", 1)}
+                    "ts": tick.get("ts") if tick else None,
+                    "oi": (oir or {}).get("oi"),
+                    "lot_size": leg.get("lotsize", 1)}
             if tick and tick.get("ts") and (newest is None or tick["ts"] > newest):
                 newest = tick["ts"]
+            if cell["oi"] is not None:
+                oi_seen = True
             item[side.lower()] = cell
         rows.append(item)
-    return {"underlying": uid, "expiry": expiry, "spot": spot,
-            "as_of": newest, "lot_size": lot or 1, "strikes": rows}
+    out = {"underlying": uid, "expiry": expiry, "spot": spot,
+           "as_of": newest, "lot_size": lot or 1, "strikes": rows,
+           "pcr": None, "max_pain": None, "atm_iv": None, "oi_window": oi_seen}
+    if oi_seen:
+        out["pcr"] = put_call_ratio(rows)
+        out["max_pain"] = max_pain(rows)
+    if spot:
+        out["atm_iv"] = atm_iv(rows, spot, expiry)
+    return out
