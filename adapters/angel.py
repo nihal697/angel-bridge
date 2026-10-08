@@ -15,6 +15,20 @@ import pyotp
 from .base import env
 
 import optionchain
+from datetime import datetime, timezone, timedelta
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _exchange_ts(message):
+    """Exchange event time from the tick itself; None if absent/invalid."""
+    try:
+        ms = int(message.get("exchange_timestamp") or 0)
+        if ms > 0:
+            return datetime.fromtimestamp(ms / 1000, tz=IST).isoformat()
+    except (ValueError, TypeError, OverflowError, OSError):
+        pass
+    return None
 
 log = logging.getLogger("broker-bridge")
 
@@ -88,12 +102,11 @@ def run_forever(on_tick):
                         if px is None:
                             return
                         price = float(px) / 100.0  # paise -> rupees
+                        ts = _exchange_ts(message)
                         sid = TOKEN_TO_ID.get(tok)
                         if sid:
-                            on_tick(sid, price)
+                            on_tick(sid, price, ts)
                         elif tok in _option_set:
-                            from datetime import datetime, timezone, timedelta
-                            ts = datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
                             optionchain.record_tick(tok, price, ts)
                 except Exception as e:
                     log.warning("[angel] bad tick ignored: %s", e)

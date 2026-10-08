@@ -40,9 +40,11 @@ def market_is_open(now=None):
     return now.weekday() < 5 and MARKET_OPEN <= now.time() <= MARKET_CLOSE
 
 
-def on_tick(sid: str, price: float):
+def on_tick(sid: str, price: float, ts: str | None = None):
     if sid in latest and price and price > 0:
-        latest[sid] = {"price": price, "ts": datetime.now(IST).isoformat()}
+        # Prefer the exchange's own event time; receipt time only as fallback.
+        # (Receipt time once masked a stale replay as live — never again.)
+        latest[sid] = {"price": price, "ts": ts or datetime.now(IST).isoformat()}
         state["last_tick_at"] = latest[sid]["ts"]
         state["connected"] = True
         state["error"] = None

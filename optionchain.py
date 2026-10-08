@@ -104,13 +104,12 @@ def record_tick(token, price, ts):
     with _opt_lock:
         opt_ticks[str(token)] = {"price": price, "ts": ts}
 
-
 def chain(uid, expiry=None, spot=None):
     """Merge master structure with live ticks. No tick yet -> ltp null."""
     expiry = expiry or nearest_expiry(uid)
     if not expiry:
         return {"underlying": uid, "expiry": None, "spot": spot, "strikes": []}
-    rows, lot = [], None
+    rows, lot, newest = [], None, None
     for strike in sorted(chain_rows(uid, expiry)):
         legs = chain_rows(uid, expiry)[strike]
         item = {"strike": strike}
@@ -119,11 +118,11 @@ def chain(uid, expiry=None, spot=None):
             tick = opt_ticks.get(str(leg.get("token", ""))) if leg else None
             if leg and lot is None:
                 lot = leg.get("lotsize", 1)
-            item[side.lower()] = {
-                "token": leg.get("token"),
-                "ltp": tick["price"] if tick else None,
-                "lot_size": leg.get("lotsize", 1),
-            }
+            cell = {"token": leg.get("token"), "ltp": tick["price"] if tick else None,
+                    "ts": tick.get("ts") if tick else None, "lot_size": leg.get("lotsize", 1)}
+            if tick and tick.get("ts") and (newest is None or tick["ts"] > newest):
+                newest = tick["ts"]
+            item[side.lower()] = cell
         rows.append(item)
     return {"underlying": uid, "expiry": expiry, "spot": spot,
-            "lot_size": lot or 1, "strikes": rows}
+            "as_of": newest, "lot_size": lot or 1, "strikes": rows}
