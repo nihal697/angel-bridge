@@ -14,6 +14,8 @@ import pyotp
 
 from .base import env
 
+import optionchain
+
 log = logging.getLogger("broker-bridge")
 
 NAME = "angel"
@@ -21,8 +23,37 @@ REQUIRED_ENV = ["ANGEL_API_KEY", "ANGEL_CLIENT_CODE", "ANGEL_PASSWORD", "ANGEL_T
 
 TOKEN_TO_ID = {"99926000": "NIFTY", "99926009": "BANKNIFTY", "99919000": "SENSEX"}
 
+# Option legs: {exchangeType: [tokens]}, refreshed by bridge.py as spot moves.
+# token -> True membership for fast routing in on_data.
+_option_tokens = {}
+_option_set = set()
+_live_sws = None
+
+
+def set_option_tokens(mapping):
+    """Replace the option subscription set; swaps live if connected."""
+    global _option_tokens, _option_set
+    _option_tokens = {int(k): [str(t) for t in v] for k, v in mapping.items() if v}
+    _option_set = {t for v in _option_tokens.values() for t in v}
+    sws = _live_sws
+    if sws is not None:
+        try:
+            old = getattr(sws, "_opt_subscribed", {})
+            for et, toks in old.items():
+                if set(toks) - set(_option_tokens.get(et, [])):
+                    sws.unsubscribe("broker-bridge", SmartWebSocketV2.LTP_MODE,
+                                    [{"exchangeType": et, "tokens": list(set(toks) - set(_option_tokens.get(et, [])))}])
+            new = [{"exchangeType": et, "tokens": toks} for et, toks in _option_tokens.items() if toks]
+            if new:
+                sws.subscribe("broker-bridge", SmartWebSocketV2.LTP_MODE, new)
+            sws._opt_subscribed = {et: list(toks) for et, toks in _option_tokens.items()}
+            log.info("[angel] option subscription now %d tokens", len(_option_set))
+        except Exception as e:
+            log.warning("[angel] live option resubscribe failed (picked up on reconnect): %s", str(e)[:150])
+
 
 def run_forever(on_tick):
+    global _live_sws
     api_key, client_code = env("ANGEL_API_KEY"), env("ANGEL_CLIENT_CODE")
     while True:
         try:
@@ -37,19 +68,33 @@ def run_forever(on_tick):
             sws = SmartWebSocketV2(data["data"]["jwtToken"], api_key, client_code, feed_token)
 
             def _on_open(_w):
+                global _live_sws
+                _live_sws = sws
                 sws.subscribe("broker-bridge", SmartWebSocketV2.LTP_MODE, [
                     {"exchangeType": 1, "tokens": ["99926000", "99926009"]},
                     {"exchangeType": 3, "tokens": ["99919000"]},
                 ])
-                log.info("[angel] subscribed (LTP)")
+                new = [{"exchangeType": et, "tokens": toks} for et, toks in _option_tokens.items() if toks]
+                if new:
+                    sws.subscribe("broker-bridge", SmartWebSocketV2.LTP_MODE, new)
+                sws._opt_subscribed = {et: list(toks) for et, toks in _option_tokens.items()}
+                log.info("[angel] subscribed (LTP); options: %d tokens", len(_option_set))
 
             def _on_data(_w, message):
                 try:
                     if isinstance(message, dict) and message.get("subscription_mode") == 1:
-                        sid = TOKEN_TO_ID.get(str(message.get("token")))
+                        tok = str(message.get("token"))
                         px = message.get("last_traded_price")
-                        if sid and px is not None:
-                            on_tick(sid, float(px) / 100.0)  # paise -> rupees
+                        if px is None:
+                            return
+                        price = float(px) / 100.0  # paise -> rupees
+                        sid = TOKEN_TO_ID.get(tok)
+                        if sid:
+                            on_tick(sid, price)
+                        elif tok in _option_set:
+                            from datetime import datetime, timezone, timedelta
+                            ts = datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                            optionchain.record_tick(tok, price, ts)
                 except Exception as e:
                     log.warning("[angel] bad tick ignored: %s", e)
 
@@ -58,6 +103,7 @@ def run_forever(on_tick):
             sws.on_error = lambda _w, e: log.warning("[angel] ws error: %s", str(e)[:150])
             sws.on_close = lambda _w: log.warning("[angel] ws closed")
             sws.connect()  # blocks until the socket closes
+            _live_sws = None
         except KeyError as e:
             log.error("[angel] missing env var %s", e)
             time.sleep(60)
