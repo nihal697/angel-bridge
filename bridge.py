@@ -81,13 +81,14 @@ def _chain_bootstrap():
         log.warning("master download failed at startup (retrying in loop): %s", str(e)[:150])
     threading.Thread(target=optionchain.refresh_loop, daemon=True).start()
     threading.Thread(target=_oi_loop, daemon=True).start()
+    threading.Thread(target=_watchdog, daemon=True).start()
     while True:
         try:
             if os.environ.get("BROKER", "angel").strip().lower() == "angel" and optionchain.master_rows:
                 _refresh_option_subs()
         except Exception as e:
             log.warning("option resubscribe failed: %s", str(e)[:150])
-        _t.sleep(600)
+        _t.sleep(60)
 
 
 
@@ -116,6 +117,33 @@ def _oi_loop():
                                 optionchain.record_oi(tok, v["oi"], ts)
         except Exception as e:
             log.warning("OI poll failed: %s", str(e)[:150])
+        _t.sleep(60)
+
+
+def _watchdog():
+    """Market open but no ticks for 3+ min = wedged feed: force a clean cycle.
+
+    This is the tripwire for half-open zombies and server-side session kills —
+    the exact failure that once served stale snapshots as live for hours.
+    """
+    import time as _t
+    import angel_session
+    while True:
+        try:
+            if market_is_open() and state.get("connected"):
+                last = None
+                for v in latest.values():
+                    if v.get("ts"):
+                        last = max(last or "", v["ts"])
+                if last:
+                    from datetime import datetime
+                    age = (datetime.now(IST) - datetime.fromisoformat(last)).total_seconds()
+                    if age > 180:
+                        log.warning("watchdog: %ds without ticks in open market — recycling feed", int(age))
+                        angel_session.invalidate()
+                        angel.force_reconnect()
+        except Exception as e:
+            log.warning("watchdog failed: %s", str(e)[:150])
         _t.sleep(60)
 
 

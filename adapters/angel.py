@@ -8,9 +8,7 @@ Env: ANGEL_API_KEY, ANGEL_CLIENT_CODE, ANGEL_PASSWORD, ANGEL_TOTP_SECRET.
 import logging
 import time
 
-from SmartApi import SmartConnect
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
-import pyotp
 
 from .base import env
 
@@ -47,7 +45,10 @@ _live_sws = None
 def set_option_tokens(mapping):
     """Replace the option subscription set; swaps live if connected."""
     global _option_tokens, _option_set
-    _option_tokens = {int(k): [str(t) for t in v] for k, v in mapping.items() if v}
+    mapping = {int(k): [str(t) for t in v] for k, v in mapping.items() if v}
+    if mapping == _option_tokens:
+        return False  # unchanged — no churn
+    _option_tokens = mapping
     _option_set = {t for v in _option_tokens.values() for t in v}
     sws = _live_sws
     if sws is not None:
@@ -66,6 +67,18 @@ def set_option_tokens(mapping):
             log.warning("[angel] live option resubscribe failed (picked up on reconnect): %s", str(e)[:150])
 
 
+def force_reconnect():
+    """Close the live socket (if any) so the loop re-logs-in and resubscribes."""
+    sws = _live_sws
+    if sws is None:
+        return False
+    try:
+        sws.close_connection()
+    except Exception:
+        pass
+    return True
+
+
 def current_option_tokens():
     """Currently subscribed option tokens, for the OI poller."""
     return {et: list(toks) for et, toks in _option_tokens.items() if toks}
@@ -73,18 +86,15 @@ def current_option_tokens():
 
 def run_forever(on_tick):
     global _live_sws
-    api_key, client_code = env("ANGEL_API_KEY"), env("ANGEL_CLIENT_CODE")
+    import angel_session
+    api_key = env("ANGEL_API_KEY")
+    client_code = env("ANGEL_CLIENT_CODE")
+    fails = 0
     while True:
         try:
-            smart = SmartConnect(api_key)
-            totp = pyotp.TOTP(env("ANGEL_TOTP_SECRET")).now()
-            data = smart.generateSession(client_code, env("ANGEL_PASSWORD"), totp)
-            if not data.get("status"):
-                raise RuntimeError(f"login failed: {data}")
-            feed_token = smart.getfeedToken()
-            log.info("[angel] login OK")
+            jwt, _rest, feed_token, _smart = angel_session.get_session()
 
-            sws = SmartWebSocketV2(data["data"]["jwtToken"], api_key, client_code, feed_token)
+            sws = SmartWebSocketV2(jwt, api_key, client_code, feed_token)
 
             def _on_open(_w):
                 global _live_sws
@@ -122,9 +132,14 @@ def run_forever(on_tick):
             sws.on_close = lambda _w: log.warning("[angel] ws closed")
             sws.connect()  # blocks until the socket closes
             _live_sws = None
+            fails = 0
         except KeyError as e:
             log.error("[angel] missing env var %s", e)
             time.sleep(60)
         except Exception as e:
+            fails += 1
+            if fails >= 3:
+                angel_session.invalidate()  # session may be dead server-side; fresh login next round
+                fails = 0
             log.warning("[angel] retry in 15s: %s", str(e)[:200])
             time.sleep(15)

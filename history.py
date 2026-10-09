@@ -1,41 +1,17 @@
-"""Angel historical candles (REST) with a cached login.
+"""Angel historical candles (REST) via the SHARED session.
 
 Covers what Yahoo never will: NFO/BFO option contracts (plus anything else
-by exchange+token). Session re-logs-in automatically when it dies.
+by exchange+token). NEVER logs in here — see angel_session.
 """
-
-import logging
-import time
-from datetime import datetime
-
-import pyotp
-import requests
-
-log = logging.getLogger("broker-bridge")
 
 _INTERVALS = {"ONE_MINUTE", "THREE_MINUTE", "FIVE_MINUTE", "TEN_MINUTE",
               "FIFTEEN_MINUTE", "THIRTY_MINUTE", "ONE_HOUR", "ONE_DAY"}
 _EXCHANGES = {"NSE", "NFO", "BSE", "BFO", "MCX", "CDS"}
 
-_session = {"api": None, "at": 0.0}
-
-
-def _login(api_key, client_code, password, totp_secret):
-    from SmartApi import SmartConnect
-    smart = SmartConnect(api_key)
-    data = smart.generateSession(client_code, password, pyotp.TOTP(totp_secret).now())
-    if not data.get("status"):
-        raise RuntimeError(f"angel history login failed: {data}")
-    _session.update(api=smart, at=time.time())
-    log.info("[history] angel REST login OK")
+def _api():
+    import angel_session
+    _jwt, _rest, _feed, smart = angel_session.get_session()
     return smart
-
-
-def _api(env):
-    if _session["api"] is None or time.time() - _session["at"] > 20 * 3600:
-        _login(env["ANGEL_API_KEY"], env["ANGEL_CLIENT_CODE"],
-               env["ANGEL_PASSWORD"], env["ANGEL_TOTP_SECRET"])
-    return _session["api"]
 
 
 def candles(env, exchange, token, interval="ONE_MINUTE", frm="", to=""):
@@ -46,14 +22,15 @@ def candles(env, exchange, token, interval="ONE_MINUTE", frm="", to=""):
         raise ValueError(f"bad interval {interval!r}")
     if not str(token).isdigit():
         raise ValueError(f"bad token {token!r}")
-    smart = _api(env)
+    smart = _api()
     try:
         resp = smart.getCandleData({"exchange": exchange, "symboltoken": str(token),
                                     "interval": interval, "fromdate": frm, "todate": to})
     except Exception as e:
         if "401" in str(e) or "token" in str(e).lower() or "session" in str(e).lower():
-            _session.update(api=None, at=0.0)
-            smart = _api(env)  # one retry on a fresh login
+            import angel_session
+            angel_session.invalidate()
+            smart = _api()  # one retry on a fresh login
             resp = smart.getCandleData({"exchange": exchange, "symboltoken": str(token),
                                         "interval": interval, "fromdate": frm,
                                         "todate": to})

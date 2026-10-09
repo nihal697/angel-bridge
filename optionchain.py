@@ -19,6 +19,8 @@ from datetime import datetime
 log = logging.getLogger("broker-bridge")
 
 MASTER_URL = "https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json"
+MASTER_CACHE = "master_cache.json"  # survives Render sleeps; avoids a 35MB boot download
+MASTER_MAX_AGE_DAYS = 7
 
 UNDERLYINGS = {
     # id: (exchange segment, Angel name, WS exchangeType)
@@ -42,13 +44,7 @@ def _parse_expiry(s):
         return None
 
 
-def load_master():
-    """Download + keep only the 3 underlyings' OPTIDX rows."""
-    global master_rows, master_ts
-    log.info("[chain] downloading instrument master (~35MB)…")
-    req = urllib.request.Request(MASTER_URL, headers={"User-Agent": "broker-bridge/1.0"})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        data = json.load(r)
+def _filter_rows(data):
     keep = []
     for row in data:
         try:
@@ -66,9 +62,43 @@ def load_master():
                                  "type": "CE" if str(row.get("symbol")).endswith("CE") else "PE"})
         except (ValueError, TypeError, AttributeError):
             continue
+    return keep
+
+
+def load_master():
+    """Fast disk cache first (survives Render sleeps), then background refresh."""
+    global master_rows, master_ts
+    import os
+    try:
+        age_days = (time.time() - os.path.getmtime(MASTER_CACHE)) / 86400
+        if age_days < MASTER_MAX_AGE_DAYS:
+            with open(MASTER_CACHE, encoding="utf-8") as f:
+                master_rows = json.load(f)
+            master_ts = datetime.now().isoformat()
+            log.info("[chain] master from disk cache: %d rows (%.1fd old)",
+                     len(master_rows), age_days)
+            return len(master_rows)
+    except (OSError, ValueError):
+        pass
+    return download_master()
+
+
+def download_master():
+    """Full download + keep only the 3 underlyings' OPTIDX rows."""
+    global master_rows, master_ts
+    log.info("[chain] downloading instrument master (~35MB)…")
+    req = urllib.request.Request(MASTER_URL, headers={"User-Agent": "broker-bridge/1.0"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        data = json.load(r)
+    keep = _filter_rows(data)
     del data
     master_rows = keep
     master_ts = datetime.now().isoformat()
+    try:
+        with open(MASTER_CACHE, "w", encoding="utf-8") as f:
+            json.dump(keep, f)
+    except OSError as e:
+        log.warning("[chain] cache write failed (continuing in-memory): %s", e)
     log.info("[chain] master ready: %d option rows", len(keep))
     return len(keep)
 
@@ -77,7 +107,7 @@ def refresh_loop():
     while True:
         time.sleep(24 * 3600)
         try:
-            load_master()
+            download_master()
         except Exception as e:
             log.warning("[chain] master refresh failed, keeping old: %s", str(e)[:150])
 
